@@ -14,13 +14,17 @@ JST = timezone(timedelta(hours=9))
 # ステータスの選択肢（一覧の選択欄で使う）
 STATUS_OPTIONS = ["未対応", "対応中", "完了"]
 
+# AI整理のモード（今は "demo" のみ対応）
+ANALYSIS_MODE = "demo"
+
 st.set_page_config(
     page_title="AI問い合わせ・依頼対応",
     page_icon="🛠️"
 )
 
 st.title("AI問い合わせ・依頼対応")
-st.caption("Ver.1 開発中｜デモモード")
+mode_label = "デモモード" if ANALYSIS_MODE == "demo" else f"{ANALYSIS_MODE}モード"
+st.caption(f"Ver.1 開発中｜{mode_label}")
 
 
 def analyze_demo(text):
@@ -40,6 +44,15 @@ def analyze_demo(text):
         "missing_info": "発生時期、利用環境、具体的なエラーメッセージ",
         "suggested_action": "詳細情報を確認して原因を切り分ける"
     }
+
+
+def analyze_inquiry(text):
+    # 画面からはこの関数だけを呼ぶ（モードに応じて分析関数を振り分ける）
+    if ANALYSIS_MODE == "demo":
+        return analyze_demo(text)
+
+    # 将来：ここに実AIモード（analyze_real）を追加する
+    raise ValueError(f"未対応の分析モードです：{ANALYSIS_MODE}")
 
 
 def init_db():
@@ -136,7 +149,11 @@ inquiry_text = st.text_area(
 
 if st.button("AIで整理"):
     if inquiry_text.strip():
-        st.session_state.analysis_result = analyze_demo(inquiry_text)
+        try:
+            st.session_state.analysis_result = analyze_inquiry(inquiry_text)
+        except ValueError as e:
+            st.error(f"AI整理に失敗しました：{e}")
+            st.stop()
         st.session_state.original_text = inquiry_text
     else:
         st.warning("問い合わせ・依頼内容を入力してください。")
