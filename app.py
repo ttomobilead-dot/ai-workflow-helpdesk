@@ -14,6 +14,9 @@ JST = timezone(timedelta(hours=9))
 # ステータスの選択肢（一覧の選択欄で使う）
 STATUS_OPTIONS = ["未対応", "対応中", "完了"]
 
+# 一覧の絞り込みで使う選択肢（先頭に「すべて」を付ける）
+FILTER_OPTIONS = ["すべて"] + STATUS_OPTIONS
+
 # AI整理のモード（今は "demo" のみ対応）
 ANALYSIS_MODE = "demo"
 
@@ -122,6 +125,50 @@ def update_status(inquiry_id, new_status):
                 "UPDATE inquiries SET status = ? WHERE id = ?",
                 (new_status, inquiry_id)
             )
+
+
+def count_by_status(inquiries):
+    # ステータスごとの件数を数える（最初は全部 0 件から始める）
+    counts = {}
+    for status in STATUS_OPTIONS:
+        counts[status] = 0
+
+    # 1件ずつ見て、そのステータスの件数を 1 増やす
+    for inquiry in inquiries:
+        status = inquiry["status"]
+        if status in counts:
+            counts[status] += 1
+
+    # 例：{"未対応": 5, "対応中": 4, "完了": 3}
+    return counts
+
+
+def filter_inquiries(inquiries, status_filter, keyword):
+    # 前後の空白を取り、大文字小文字を区別しないように小文字にそろえる
+    keyword = (keyword or "").strip().lower()
+
+    filtered = []
+    for inquiry in inquiries:
+        # ステータスの条件（「すべて」なら全件が対象）
+        if status_filter != "すべて" and inquiry["status"] != status_filter:
+            continue
+
+        # キーワードの条件（空欄なら検索しない）
+        if keyword:
+            # None が入っていても or "" で空文字にしてからつなげる
+            target = " ".join([
+                inquiry["inquiry_text"] or "",
+                inquiry["summary"] or "",
+                inquiry["category"] or "",
+            ]).lower()
+            if keyword not in target:
+                continue
+
+        # ここまで来たら両方の条件に合っている
+        filtered.append(inquiry)
+
+    # 条件に合った問い合わせだけのリスト（0件なら []）
+    return filtered
 
 
 init_db()
@@ -236,12 +283,40 @@ except sqlite3.Error as e:
     inquiries = []
 else:
     # 読み込みに成功したときだけ、件数または0件メッセージを表示する
-    if inquiries:
-        st.caption(f"全{len(inquiries)}件")
-    else:
+    if not inquiries:
         st.info("まだ登録された問い合わせはありません。")
 
-for inquiry in inquiries:
+# 一覧に表示する問い合わせ（1件もなければ空のまま）
+filtered = []
+
+if inquiries:
+    # ステータス別件数（絞り込みに関係なく、常に全体の数を表示する）
+    counts = count_by_status(inquiries)
+    col_all, col_todo, col_doing, col_done = st.columns(4)
+    col_all.metric("全件", len(inquiries))
+    col_todo.metric("未対応", counts["未対応"])
+    col_doing.metric("対応中", counts["対応中"])
+    col_done.metric("完了", counts["完了"])
+
+    # 絞り込み条件（key を付けると、st.rerun() 後も選択が残る）
+    status_filter = st.radio(
+        "ステータス",
+        FILTER_OPTIONS,
+        horizontal=True,
+        key="filter_status"
+    )
+    keyword = st.text_input(
+        "キーワード（問い合わせ内容・要約・カテゴリ）",
+        key="search_keyword"
+    )
+
+    filtered = filter_inquiries(inquiries, status_filter, keyword)
+    st.caption(f"表示中 {len(filtered)}件 / 全{len(inquiries)}件")
+
+    if not filtered:
+        st.info("条件に一致する問い合わせはありません。")
+
+for inquiry in filtered:
     with st.expander(f"No.{inquiry['id']}｜[{inquiry['status']}]｜{inquiry['summary']}"):
         st.write("**登録日時：**", inquiry["created_at"])
         st.write("**カテゴリ：**", inquiry["category"])
