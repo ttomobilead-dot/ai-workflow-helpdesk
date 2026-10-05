@@ -36,6 +36,11 @@ if ANALYSIS_MODE == "demo":
         "整理結果は登録前に確認・修正できます。"
     )
 
+st.warning(
+    "公開デモのため、個人情報や機密情報は入力しないでください。"
+    "登録内容は他の利用者にも表示されることがあり、データは初期状態に戻る場合があります。"
+)
+
 
 def make_summary(text, max_length=40):
     # 入力文の最初の行（空行は飛ばす）を、長ければ max_length 文字で切って要約にする
@@ -89,6 +94,37 @@ def analyze_inquiry(text):
     raise ValueError(f"未対応の分析モードです：{ANALYSIS_MODE}")
 
 
+# DBが空のときに登録するポートフォリオ用サンプル（id と created_at は固定値）
+# 並び：id, inquiry_text, category, summary, priority,
+#       missing_info, suggested_action, status, created_at
+SAMPLE_INQUIRIES = [
+    (1, "パスワードをリセットしたい", "アカウント", "パスワードをリセットしたい", "高",
+     "対象のアカウント（ユーザーID）、利用しているシステム名、本人確認の方法",
+     "本人確認のうえ、パスワードリセットの手順を案内する",
+     "完了", "2026-10-01T15:59:22+09:00"),
+    (2, "VPNにつながらない", "ネットワーク / VPN", "VPNにつながらない", "高",
+     "接続場所（自宅・外出先など）、表示されるエラーメッセージ、発生時期",
+     "インターネット自体に接続できるか確認し、VPNクライアントの再起動と再接続を案内する",
+     "対応中", "2026-10-02T09:41:51+09:00"),
+    (3, "プリンターで印刷できない", "プリンター", "プリンターで印刷できない", "中",
+     "プリンター名・設置場所、エラー表示の有無、他の人も印刷できないか",
+     "プリンターの電源・用紙・エラー表示と、印刷待ちのジョブを確認する",
+     "未対応", "2026-10-03T17:52:51+09:00"),
+    (4, "Excelが重い", "Office / Excel", "Excelが重い", "中",
+     "Excelのバージョン、発生時期、具体的な症状やエラーメッセージ、対象ファイル",
+     "特定のファイルだけで起きるかを確認し、原因を切り分ける",
+     "対応中", "2026-10-05T13:16:07+09:00"),
+    (5, "Excelでマクロの警告が出る", "Office / Excel", "Excelでマクロの警告が出る", "中",
+     "Excelのバージョン、警告メッセージの内容、対象ファイル",
+     "マクロ設定や信頼済み場所、ファイルの取得元を確認する",
+     "未対応", "2026-10-05T14:25:47+09:00"),
+    (6, "Outlookでメールを送信できない", "メール / Outlook", "Outlookでメールを送信できない", "中",
+     "表示されるエラーメッセージ、送信できない宛先、発生時期、受信はできるか",
+     "ネットワーク接続とOutlookの送受信状態を確認し、再起動や再送信を試す",
+     "完了", "2026-10-05T14:56:20+09:00"),
+]
+
+
 def init_db():
     # テーブルがなければ作る（あれば何もしない）
     with closing(sqlite3.connect(DB_PATH)) as conn:
@@ -106,6 +142,30 @@ def init_db():
                     created_at       TEXT NOT NULL
                 )
             """)
+
+
+def seed_sample_data():
+    # テーブルが空のときだけサンプルを登録する（1件でもあれば何もしない）
+    with closing(sqlite3.connect(DB_PATH)) as conn:
+        count = conn.execute("SELECT COUNT(*) FROM inquiries").fetchone()[0]
+        if count > 0:
+            return 0
+
+        # id を明示し OR IGNORE を付けて、同時に起動しても二重に登録されないようにする
+        with conn:
+            conn.executemany(
+                """
+                INSERT OR IGNORE INTO inquiries (
+                    id, inquiry_text, category, summary, priority,
+                    missing_info, suggested_action, status, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                SAMPLE_INQUIRIES
+            )
+
+    # 登録したサンプルの件数を返す
+    return len(SAMPLE_INQUIRIES)
 
 
 def save_inquiry(inquiry_text, category, summary, priority, missing_info, suggested_action):
@@ -212,6 +272,7 @@ def filter_inquiries(inquiries, status_filter, keyword):
 
 
 init_db()
+seed_sample_data()
 
 
 # AI整理結果を一時的に保存する場所
