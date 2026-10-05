@@ -27,22 +27,53 @@ st.set_page_config(
 
 st.title("AI問い合わせ・依頼対応")
 mode_label = "デモモード" if ANALYSIS_MODE == "demo" else f"{ANALYSIS_MODE}モード"
-st.caption(f"Ver.1 開発中｜{mode_label}")
+st.caption(f"Ver.1｜{mode_label}")
+
+if ANALYSIS_MODE == "demo":
+    st.info(
+        "現在はデモモードです。実AI APIには接続しておらず、"
+        "入力文に含まれるキーワードをもとに、あらかじめ用意したルールで整理例を表示します。"
+        "整理結果は登録前に確認・修正できます。"
+    )
+
+
+def make_summary(text, max_length=40):
+    # 入力文の最初の行（空行は飛ばす）を、長ければ max_length 文字で切って要約にする
+    for line in text.splitlines():
+        line = line.strip()
+        if line:
+            if len(line) > max_length:
+                return line[:max_length] + "…"
+            return line
+    return ""
 
 
 def analyze_demo(text):
-    if "Excel" in text or "エクセル" in text:
+    summary = make_summary(text)
+
+    # 大文字小文字を区別しないように、小文字にそろえてから判定する
+    if "excel" in text.lower() or "エクセル" in text:
+        # マクロに触れているときだけ、マクロ向けの整理例を返す
+        if "マクロ" in text or "macro" in text.lower():
+            return {
+                "category": "Office / Excel",
+                "summary": summary,
+                "priority": "中",
+                "missing_info": "Excelのバージョン、警告メッセージの内容、対象ファイル",
+                "suggested_action": "マクロ設定や信頼済み場所、ファイルの取得元を確認する"
+            }
+
         return {
             "category": "Office / Excel",
-            "summary": "Excelでマクロの警告が表示される",
+            "summary": summary,
             "priority": "中",
-            "missing_info": "Excelのバージョン、警告メッセージの内容、対象ファイル",
-            "suggested_action": "マクロ設定や信頼済み場所、ファイルの取得元を確認する"
+            "missing_info": "Excelのバージョン、発生時期、具体的な症状やエラーメッセージ、対象ファイル",
+            "suggested_action": "特定のファイルだけで起きるかを確認し、原因を切り分ける"
         }
 
     return {
         "category": "その他",
-        "summary": text,
+        "summary": summary,
         "priority": "中",
         "missing_info": "発生時期、利用環境、具体的なエラーメッセージ",
         "suggested_action": "詳細情報を確認して原因を切り分ける"
@@ -143,6 +174,15 @@ def count_by_status(inquiries):
     return counts
 
 
+def format_datetime(value):
+    # DBの値（例：2026-10-05T12:30:00+09:00）を表示用に「2026-10-05 12:30」へ変換する
+    # 変換できない値のときは、そのまま表示する（DBの値は変更しない）
+    try:
+        return datetime.fromisoformat(value).strftime("%Y-%m-%d %H:%M")
+    except (TypeError, ValueError):
+        return value
+
+
 def filter_inquiries(inquiries, status_filter, keyword):
     # 前後の空白を取り、大文字小文字を区別しないように小文字にそろえる
     keyword = (keyword or "").strip().lower()
@@ -186,6 +226,10 @@ if "original_text" not in st.session_state:
 if "status_message" not in st.session_state:
     st.session_state.status_message = ""
 
+# 登録成功後に表示するメッセージ（st.rerun() をまたいで残すため）
+if "registration_message" not in st.session_state:
+    st.session_state.registration_message = ""
+
 
 inquiry_text = st.text_area(
     "問い合わせ・依頼内容",
@@ -206,13 +250,26 @@ if st.button("AIで整理"):
         st.warning("問い合わせ・依頼内容を入力してください。")
 
 
+# 前回の登録成功メッセージを1回だけ表示して消す
+if st.session_state.registration_message:
+    st.success(st.session_state.registration_message)
+    st.session_state.registration_message = ""
+
+
 # AI整理後だけHuman Review画面を表示
 if st.session_state.analysis_result is not None:
 
     result = st.session_state.analysis_result
 
-    st.subheader("AI整理結果")
+    st.subheader("AI整理結果（デモ）")
     st.caption("内容を確認し、必要に応じて修正してください。")
+
+    # 「AIで整理」を押した時点の文章（登録されるのはこの文章）
+    st.text_area(
+        "対象の問い合わせ内容",
+        value=st.session_state.original_text,
+        disabled=True
+    )
 
     category = st.text_input(
         "カテゴリ",
@@ -256,14 +313,14 @@ if st.session_state.analysis_result is not None:
             st.error(f"登録に失敗しました：{e}")
             st.stop()
 
-        st.success(f"登録しました（No.{inquiry_id}、ステータス：未対応）")
-
-        st.write("### 登録内容")
-        st.write("**カテゴリ：**", category)
-        st.write("**要約：**", summary)
-        st.write("**優先度：**", priority)
-        st.write("**不足情報：**", missing_info)
-        st.write("**対応候補：**", suggested_action)
+        # 整理結果を消して、同じフォームから二重登録できないようにする
+        st.session_state.analysis_result = None
+        st.session_state.registration_message = (
+            f"登録しました（No.{inquiry_id}、ステータス：未対応）。"
+            "登録内容は下の一覧で確認できます。"
+        )
+        # 最初から実行し直して、フォームを閉じ、一覧に新しい問い合わせを表示する
+        st.rerun()
 
 
 # ここから登録済み問い合わせ一覧（上の if の外なので、常に表示される）
@@ -300,7 +357,7 @@ if inquiries:
 
     # 絞り込み条件（key を付けると、st.rerun() 後も選択が残る）
     status_filter = st.radio(
-        "ステータス",
+        "ステータスで絞り込み",
         FILTER_OPTIONS,
         horizontal=True,
         key="filter_status"
@@ -318,7 +375,7 @@ if inquiries:
 
 for inquiry in filtered:
     with st.expander(f"No.{inquiry['id']}｜[{inquiry['status']}]｜{inquiry['summary']}"):
-        st.write("**登録日時：**", inquiry["created_at"])
+        st.write("**登録日時：**", format_datetime(inquiry["created_at"]))
         st.write("**カテゴリ：**", inquiry["category"])
         st.write("**優先度：**", inquiry["priority"])
         st.write("**問い合わせ内容：**", inquiry["inquiry_text"])
